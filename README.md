@@ -2,7 +2,7 @@
 
 Pipeline end-to-end de Engenharia e Análise de Dados meteorológicos construído sobre arquitetura **Medalhão (Bronze, Silver e Gold)** com armazenamento colunar em **Apache Parquet**, processamento analítico *in-process* via **DuckDB** e relatório interativo em **Streamlit + Plotly**.
 
-🔗 **Dashboard Interativo:** *(adicione aqui o link do Streamlit Cloud após publicar)*
+🔗 **Dashboard Interativo:** *https://mirelly-climate-data-lake.streamlit.app*
 
 ---
 
