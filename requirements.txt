@@ -5,3 +5,4 @@ duckdb>=1.1.0
 streamlit>=1.38.0
 plotly>=5.24.0
 python-dotenv>=1.0.1
+pytest>=8.0.0
