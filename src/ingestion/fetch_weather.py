@@ -1,5 +1,6 @@
 import json
 import logging
+import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,8 +24,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def fetch_city_weather(city_info: dict, start_date: str, end_date: str) -> dict:
-    """Consulta a série histórica diária na Open-Meteo API para uma coordenada."""
+def fetch_city_weather(
+    city_info: dict,
+    start_date: str,
+    end_date: str,
+    max_retries: int = 3,
+    base_backoff: int = 15,
+) -> dict:
+    """Consulta a série histórica na Open-Meteo com backoff exponencial e jitter."""
     params = {
         "latitude": city_info["latitude"],
         "longitude": city_info["longitude"],
@@ -34,9 +41,28 @@ def fetch_city_weather(city_info: dict, start_date: str, end_date: str) -> dict:
         "timezone": "America/Sao_Paulo",
     }
 
-    response = requests.get(OPEN_METEO_ARCHIVE_URL, params=params, timeout=30)
-    response.raise_for_status()
-    return response.json()
+    for attempt in range(1, max_retries + 1):
+        response = requests.get(OPEN_METEO_ARCHIVE_URL, params=params, timeout=30)
+
+        if response.status_code == 429:
+            # Exponencial (15s, 30s, 60s) + jitter aleatório de até 2s
+            wait_seconds = base_backoff * (2 ** (attempt - 1)) + random.uniform(0, 2)
+            logger.warning(
+                "Rate limit (429) atingido para %s. Aguardando %.1fs (tentativa %d/%d)...",
+                city_info["name"],
+                wait_seconds,
+                attempt,
+                max_retries,
+            )
+            time.sleep(wait_seconds)
+            continue
+
+        response.raise_for_status()
+        return response.json()
+
+    raise requests.HTTPError(
+        f"Limite de tentativas excedido (HTTP 429) para {city_info['name']}."
+    )
 
 
 def save_to_bronze(city_slug: str, city_info: dict, raw_payload: dict) -> Path:
@@ -62,7 +88,7 @@ def save_to_bronze(city_slug: str, city_info: dict, raw_payload: dict) -> Path:
     return output_path
 
 
-def run_ingestion() -> None:
+def run_ingestion(force: bool = False) -> None:
     """Executa o pipeline de extração para todas as cidades configuradas."""
     logger.info(
         "Iniciando ingestão Bronze (%s até %s) para %d cidades...",
@@ -72,6 +98,12 @@ def run_ingestion() -> None:
     )
 
     for city_slug, city_info in CITIES.items():
+        output_path = BRONZE_DIR / f"{city_slug}_raw.json"
+
+        if output_path.exists() and not force:
+            logger.info("Já existente na Bronze: %s (pulando extração)", output_path.name)
+            continue
+
         try:
             logger.info("Extraindo dados de %s (%s)...", city_info["name"], city_info["state"])
             payload = fetch_city_weather(city_info, START_DATE, END_DATE)
@@ -80,8 +112,7 @@ def run_ingestion() -> None:
             total_days = len(payload.get("daily", {}).get("time", []))
             logger.info("Salvo com sucesso: %s (%d registros diários)", saved_path.name, total_days)
 
-            # Pausa curta para evitar rate limit (HTTP 429) da API pública
-            time.sleep(1)
+            time.sleep(5)
 
         except requests.RequestException as exc:
             logger.error("Falha na requisição para %s: %s", city_info["name"], exc)
